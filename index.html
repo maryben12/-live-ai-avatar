@@ -11,7 +11,7 @@
 
 body {
   margin: 0;
-  padding: 25px;
+  padding: 25px 15px;
   background: #101322;
   color: white;
   font-family: Arial, sans-serif;
@@ -21,10 +21,10 @@ body {
 h1 { color: #a78bfa; }
 
 .container {
-  max-width: 950px;
+  max-width: 900px;
   margin: 25px auto;
   display: grid;
-  grid-template-columns: repeat(auto-fit,minmax(280px,1fr));
+  grid-template-columns: repeat(auto-fit,minmax(260px,1fr));
   gap: 20px;
 }
 
@@ -34,29 +34,53 @@ h1 { color: #a78bfa; }
   border-radius: 15px;
 }
 
-video, canvas, img {
-  width: 100%;
-  max-height: 330px;
-  object-fit: contain;
-  border-radius: 10px;
+.preview {
+  height: 300px;
   background: #080b14;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  perspective: 700px;
+}
+
+#avatar {
+  display: none;
+  max-width: 90%;
+  max-height: 90%;
+  object-fit: contain;
+  transform-origin: center center;
+  will-change: transform;
+  transition: transform 0.08s linear;
+}
+
+video { display: none; }
+
+input {
+  max-width: 100%;
+  margin: 15px;
 }
 
 button {
-  padding: 12px 20px;
+  padding: 12px 18px;
   margin: 8px;
+  background: #8b5cf6;
   border: none;
   border-radius: 8px;
-  background: #8b5cf6;
   color: white;
   cursor: pointer;
 }
 
-input { margin: 15px; }
+button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
 
 #status {
   color: #c4b5fd;
   margin: 20px;
+  overflow-wrap: anywhere;
 }
 </style>
 </head>
@@ -64,74 +88,100 @@ input { margin: 15px; }
 <body>
 
 <h1>✨ Live AI Avatar Studio</h1>
-<p>Upload your avatar and track your facial movements.</p>
+<p>Upload a portrait and control its movement with your webcam.</p>
 
 <div class="container">
 
   <div class="panel">
-    <h2>Avatar Photo</h2>
-    <img id="avatar" alt="Your uploaded avatar">
+    <h2>Your Avatar</h2>
+
+    <div class="preview">
+      <img id="avatar" alt="Uploaded portrait">
+      <span id="placeholder">Upload your photo here</span>
+    </div>
+
     <input type="file" id="photo" accept="image/*">
   </div>
 
   <div class="panel">
-    <h2>Live Face Tracking</h2>
-<video id="camera" autoplay playsinline muted style="display:none"></video>
-  <canvas id="tracking"></canvas
-    <br>
+    <h2>Camera Tracking</h2>
+    <p>Camera runs privately in your browser.</p>
     <button id="start">Start Tracking</button>
-    <button id="stop">Stop</button>
+    <button id="stop" disabled>Stop</button>
+    <video id="camera" autoplay playsinline muted></video>
+    <p id="status">Upload a photo to begin.</p>
   </div>
 
 </div>
 
-<div class="panel" style="max-width:950px;margin:auto">
-  <h2>Facial Movement Information</h2>
-  <p id="head">Head movement: Waiting</p>
-  <p id="mouth">Mouth movement: Waiting</p>
-  <p id="eyes">Eye movement: Waiting</p>
-  <p id="status">Upload a photo and start your camera.</p>
+<div class="panel" style="max-width:900px;margin:auto">
+  <h2>Live Movement Information</h2>
+  <p id="head">Head: Waiting</p>
+  <p id="mouth">Mouth: Waiting</p>
+  <p id="eyes">Eyes: Waiting</p>
 </div>
 
 <script type="module">
+
 import {
   FaceLandmarker,
   FilesetResolver
 } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
 const camera = document.getElementById("camera");
-const canvas = document.getElementById("tracking");
-const ctx = canvas.getContext("2d");
+const avatar = document.getElementById("avatar");
 const status = document.getElementById("status");
 
+let tracker = null;
 let stream = null;
-let faceLandmarker = null;
 let running = false;
+let previousTime = -1;
 
-document.getElementById("photo").onchange = (e) => {
-  const file = e.target.files[0];
-  if (file) {
-    document.getElementById("avatar").src =
-      URL.createObjectURL(file);
-    status.textContent = "Avatar photo uploaded!";
+let smoothX = 0;
+let smoothY = 0;
+let smoothAngle = 0;
+
+const clamp = (value, min, max) =>
+  Math.max(min, Math.min(max, value));
+
+document.getElementById("photo").addEventListener(
+  "change", event => {
+    const file = event.target.files[0];
+
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      status.textContent = "Please choose an image.";
+      return;
+    }
+
+    avatar.src = URL.createObjectURL(file);
+    avatar.style.display = "block";
+
+    document.getElementById("placeholder").style.display =
+      "none";
+
+    status.textContent = "Portrait uploaded successfully!";
   }
-};
+);
 
-async function setupTracker() {
-  status.textContent = "Loading facial tracking model...";
+async function loadTracker() {
+
+  status.textContent = "Loading face tracking model...";
 
   const vision = await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
   );
 
-  faceLandmarker = await FaceLandmarker.createFromOptions(
+  tracker = await FaceLandmarker.createFromOptions(
     vision,
     {
       baseOptions: {
         modelAssetPath:
           "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-      delegate: "CPU"
+        delegate: "CPU"
       },
+
       runningMode: "VIDEO",
       numFaces: 1,
       outputFaceBlendshapes: true
@@ -139,127 +189,161 @@ async function setupTracker() {
   );
 }
 
-async function startCamera() {
-  try {
-    status.textContent = "Starting camera...";
+async function startTracking() {
 
-    if (!faceLandmarker) {
-      await setupTracker();
+  if (!avatar.src) {
+    status.textContent = "Please upload a photo first.";
+    return;
+  }
+
+  try {
+
+    document.getElementById("start").disabled = true;
+
+    if (!tracker) {
+      await loadTracker();
     }
 
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 320, height: 240 },
+      video: {
+        width: 320,
+        height: 240,
+        facingMode: "user"
+      },
       audio: false
     });
 
     camera.srcObject = stream;
+
     await camera.play();
 
-   canvas.width = 320;
-    canvas.height = 240;
-
     running = true;
-    status.textContent = "Face tracking is active!";
-    trackFace();
+    previousTime = -1;
+
+    document.getElementById("stop").disabled = false;
+
+    status.textContent = "Face tracking is starting...";
+
+    requestAnimationFrame(track);
 
   } catch (error) {
-    status.textContent =
-      "Could not start: " + error.message;
+
+    status.textContent = "Camera error: " + error.message;
+
+    document.getElementById("start").disabled = false;
   }
 }
 
-function trackFace() {
+function track() {
+
   if (!running) return;
 
-  if (camera.readyState >= 2) {
-    const result = faceLandmarker.detectForVideo(
+  if (
+    camera.readyState >= 2 &&
+    camera.currentTime !== previousTime
+  ) {
+
+    previousTime = camera.currentTime;
+
+    const result = tracker.detectForVideo(
       camera,
       performance.now()
     );
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(camera, 0, 0, 320, 240);
-
     if (result.faceLandmarks.length > 0) {
+
       const points = result.faceLandmarks[0];
 
-      ctx.fillStyle = "#a78bfa";
+      const nose = points[1];
+      const leftEye = points[33];
+      const rightEye = points[263];
 
-      for (const point of points) {
-        ctx.beginPath();
-        ctx.arc(
-          point.x * 320,
-          point.y * 240,
-          1.5,
-          0,
-          Math.PI * 2
-        );
-        ctx.fill();
+      const eyeAngle = Math.atan2(
+        rightEye.y - leftEye.y,
+        rightEye.x - leftEye.x
+      );
+
+      const eyeDistance = Math.hypot(
+        rightEye.x - leftEye.x,
+        rightEye.y - leftEye.y
+      );
+
+      const eyeMiddle = (leftEye.x + rightEye.x) / 2;
+
+      const moveX = clamp(
+        (0.5 - nose.x) * 180,
+        -70,
+        70
+      );
+
+      const moveY = clamp(
+        (0.5 - nose.y) * 130,
+        -45,
+        45
+      );
+
+      const yaw = clamp(
+        ((nose.x - eyeMiddle) /
+        Math.max(eyeDistance, 0.001)) * 35,
+        -20,
+        20
+      );
+
+      const angle = clamp(
+        eyeAngle * 180 / Math.PI,
+        -25,
+        25
+      );
+
+      smoothX += (moveX - smoothX) * 0.25;
+      smoothY += (moveY - smoothY) * 0.25;
+      smoothAngle += (angle - smoothAngle) * 0.25;
+
+      avatar.style.transform =
+        `translate3d(${smoothX}px, ${smoothY}px, 0)
+         rotate(${smoothAngle}deg)
+         rotateY(${yaw}deg)`;
+
+      const blend =
+        result.faceBlendshapes[0]?.categories || [];
+
+      function score(name) {
+        return blend.find(
+          item => item.categoryName === name
+        )?.score || 0;
       }
 
-      const blend = result.faceBlendshapes[0]?.categories || [];
+      const jaw = score("jawOpen");
 
-      function getValue(name) {
-        return blend.find(x => x.categoryName === name)?.score || 0;
-      }
-
-      const jaw = getValue("jawOpen");
-const leftBlink = getValue("eyeBlinkLeft");
-const rightBlink = getValue("eyeBlinkRight");
-
-const nose = points[1];
-
-const movementX = (nose.x - 0.5) * 180
-const movementY = (nose.y - 0.5) * 120
-
-const avatar = document.getElementById("avatar");
-
-avatar.style.transform =
-  `translate(${movementX}px, ${movementY}px)`
-
-avatar.style.transition = "transform 0.1s ease";
-
-avatar.style.filter =
-  `brightness(${1 - ((leftBlink + rightBlink) / 2) * 0.15})`;
-
-const nose = points[1];
-
-const movementX = (nose.x - 0.5) * 30;
-const movementY = (nose.y - 0.5) * 20;
-
-const avatar = document.getElementById("avatar");
-
-avatar.style.transform =
-  `translate(${movementX}px, ${movementY}px)`;
-
-avatar.style.transition = "transform 0.1s ease";
-
-avatar.style.filter =
-  `brightness(${1 - ((leftBlink + rightBlink) / 2) * 0.15})`;
-      const blink = (getValue("eyeBlinkLeft") +
-                     getValue("eyeBlinkRight")) / 2;
+      const blink =
+        (score("eyeBlinkLeft") +
+         score("eyeBlinkRight")) / 2;
 
       document.getElementById("head").textContent =
-        "Head movement: Face detected";
+        "Head: Tracking active";
 
       document.getElementById("mouth").textContent =
-        "Mouth movement: " + Math.round(jaw * 100) + "% open";
+        "Mouth opening: " + Math.round(jaw * 100) + "%";
 
       document.getElementById("eyes").textContent =
         "Eye blinking: " + Math.round(blink * 100) + "%";
 
-      status.textContent = "Tracking your face successfully!";
+      status.textContent = "Your avatar is following your movements!";
+
     } else {
-      status.textContent = "No face detected. Look at your camera.";
+
+      document.getElementById("head").textContent =
+        "Head: No face detected";
+
+      status.textContent = "Please look towards your camera.";
     }
   }
 
-  requestAnimationFrame(trackFace);
+  requestAnimationFrame(track);
 }
 
-document.getElementById("start").onclick = startCamera;
+function stopTracking() {
 
-document.getElementById("stop").onclick = () => {
   running = false;
 
   if (stream) {
@@ -268,11 +352,25 @@ document.getElementById("stop").onclick = () => {
   }
 
   camera.srcObject = null;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  avatar.style.transform = "none";
+
+  document.getElementById("start").disabled = false;
+  document.getElementById("stop").disabled = true;
+
   status.textContent = "Tracking stopped.";
-};
+}
+
+document.getElementById("start").addEventListener(
+  "click", startTracking
+);
+
+document.getElementById("stop").addEventListener(
+  "click", stopTracking
+);
 
 </script>
+
 </body>
 </html>
 
