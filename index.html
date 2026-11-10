@@ -76,8 +76,8 @@ input { margin: 15px; }
 
   <div class="panel">
     <h2>Live Face Tracking</h2>
-    <video id="camera" autoplay playsinline muted></video>
-    <canvas id="tracking" hidden></canvas>
+<video id="camera" autoplay playsinline muted style="display:none"></video>
+  <canvas id="tracking"></canvas
     <br>
     <button id="start">Start Tracking</button>
     <button id="stop">Stop</button>
@@ -155,8 +155,8 @@ async function startCamera() {
     camera.srcObject = stream;
     await camera.play();
 
-    canvas.width = 640;
-    canvas.height = 480;
+   canvas.width = 320;
+    canvas.height = 240;
 
     running = true;
     status.textContent = "Face tracking is active!";
@@ -178,7 +178,7 @@ function trackFace() {
     );
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(camera, 0, 0, 640, 480);
+    ctx.drawImage(camera, 0, 0, 320, 240);
 
     if (result.faceLandmarks.length > 0) {
       const points = result.faceLandmarks[0];
@@ -188,8 +188,8 @@ function trackFace() {
       for (const point of points) {
         ctx.beginPath();
         ctx.arc(
-          point.x * 640,
-          point.y * 480,
+          point.x * 320,
+          point.y * 240,
           1.5,
           0,
           Math.PI * 2
