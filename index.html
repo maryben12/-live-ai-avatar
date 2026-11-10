@@ -2,106 +2,245 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Live AI Avatar Studio</title>
-  <style>
-    body {
-      margin: 0;
-      background: #101322;
-      color: white;
-      font-family: Arial, sans-serif;
-      text-align: center;
-      padding: 30px 15px;
-    }
-    h1 { color: #a78bfa; }
-    .container {
-      max-width: 850px;
-      margin: 25px auto;
-      display: grid;
-      grid-template-columns: repeat(auto-fit,minmax(250px,1fr));
-      gap: 20px;
-    }
-    .panel {
-      background: #20263a;
-      padding: 20px;
-      border-radius: 15px;
-    }
-    img, video {
-      width: 100%;
-      max-height: 300px;
-      object-fit: contain;
-      border-radius: 12px;
-      background: #080b14;
-    }
-    button, input {
-      margin: 12px 0;
-      padding: 12px;
-      border-radius: 8px;
-    }
-    button {
-      background: #8b5cf6;
-      color: white;
-      border: 0;
-      cursor: pointer;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live AI Avatar Studio</title>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 25px;
+  background: #101322;
+  color: white;
+  font-family: Arial, sans-serif;
+  text-align: center;
+}
+
+h1 { color: #a78bfa; }
+
+.container {
+  max-width: 950px;
+  margin: 25px auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit,minmax(280px,1fr));
+  gap: 20px;
+}
+
+.panel {
+  background: #20263a;
+  padding: 20px;
+  border-radius: 15px;
+}
+
+video, canvas, img {
+  width: 100%;
+  max-height: 330px;
+  object-fit: contain;
+  border-radius: 10px;
+  background: #080b14;
+}
+
+button {
+  padding: 12px 20px;
+  margin: 8px;
+  border: none;
+  border-radius: 8px;
+  background: #8b5cf6;
+  color: white;
+  cursor: pointer;
+}
+
+input { margin: 15px; }
+
+#status {
+  color: #c4b5fd;
+  margin: 20px;
+}
+</style>
 </head>
+
 <body>
-  <h1>✨ Live AI Avatar Studio</h1>
-  <p>Upload an image and preview your live camera.</p>
 
-  <div class="container">
-    <div class="panel">
-      <h2>Your Avatar Photo</h2>
-      <img id="avatar" alt="Uploaded avatar">
-      <input type="file" id="photo" accept="image/*">
-    </div>
+<h1>✨ Live AI Avatar Studio</h1>
+<p>Upload your avatar and track your facial movements.</p>
 
-    <div class="panel">
-      <h2>Live Camera</h2>
-      <video id="camera" autoplay playsinline muted></video>
-      <br>
-      <button id="start">Start Camera</button>
-      <button id="stop">Stop Camera</button>
-    </div>
+<div class="container">
+
+  <div class="panel">
+    <h2>Avatar Photo</h2>
+    <img id="avatar" alt="Your uploaded avatar">
+    <input type="file" id="photo" accept="image/*">
   </div>
 
-  <p id="status">Upload a photo to get started.</p>
+  <div class="panel">
+    <h2>Live Face Tracking</h2>
+    <video id="camera" autoplay playsinline muted></video>
+    <canvas id="tracking" hidden></canvas>
+    <br>
+    <button id="start">Start Tracking</button>
+    <button id="stop">Stop</button>
+  </div>
 
-  <script>
-    const photo = document.getElementById("photo");
-    const avatar = document.getElementById("avatar");
-    const camera = document.getElementById("camera");
-    const status = document.getElementById("status");
-    let stream;
+</div>
 
-    photo.addEventListener("change", () => {
-      const file = photo.files[0];
-      if (file) {
-        avatar.src = URL.createObjectURL(file);
-        status.textContent = "Photo uploaded successfully!";
-      }
+<div class="panel" style="max-width:950px;margin:auto">
+  <h2>Facial Movement Information</h2>
+  <p id="head">Head movement: Waiting</p>
+  <p id="mouth">Mouth movement: Waiting</p>
+  <p id="eyes">Eye movement: Waiting</p>
+  <p id="status">Upload a photo and start your camera.</p>
+</div>
+
+<script type="module">
+import {
+  FaceLandmarker,
+  FilesetResolver
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+const camera = document.getElementById("camera");
+const canvas = document.getElementById("tracking");
+const ctx = canvas.getContext("2d");
+const status = document.getElementById("status");
+
+let stream = null;
+let faceLandmarker = null;
+let running = false;
+
+document.getElementById("photo").onchange = (e) => {
+  const file = e.target.files[0];
+  if (file) {
+    document.getElementById("avatar").src =
+      URL.createObjectURL(file);
+    status.textContent = "Avatar photo uploaded!";
+  }
+};
+
+async function setupTracker() {
+  status.textContent = "Loading facial tracking model...";
+
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+
+  faceLandmarker = await FaceLandmarker.createFromOptions(
+    vision,
+    {
+      baseOptions: {
+        modelAssetPath:
+          "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+        delegate: "GPU"
+      },
+      runningMode: "VIDEO",
+      numFaces: 1,
+      outputFaceBlendshapes: true
+    }
+  );
+}
+
+async function startCamera() {
+  try {
+    status.textContent = "Starting camera...";
+
+    if (!faceLandmarker) {
+      await setupTracker();
+    }
+
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480 },
+      audio: false
     });
 
-    document.getElementById("start").onclick = async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: false
-        });
-        camera.srcObject = stream;
-        status.textContent = "Camera is running!";
-      } catch (error) {
-        status.textContent = "Camera access failed. Check browser permissions.";
-      }
-    };
+    camera.srcObject = stream;
+    await camera.play();
 
-    document.getElementById("stop").onclick = () => {
-      if (stream) stream.getTracks().forEach(track => track.stop());
-      camera.srcObject = null;
-      status.textContent = "Camera stopped.";
-    };
-  </script>
+    canvas.width = 640;
+    canvas.height = 480;
+
+    running = true;
+    status.textContent = "Face tracking is active!";
+    trackFace();
+
+  } catch (error) {
+    status.textContent =
+      "Could not start: " + error.message;
+  }
+}
+
+function trackFace() {
+  if (!running) return;
+
+  if (camera.readyState >= 2) {
+    const result = faceLandmarker.detectForVideo(
+      camera,
+      performance.now()
+    );
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(camera, 0, 0, 640, 480);
+
+    if (result.faceLandmarks.length > 0) {
+      const points = result.faceLandmarks[0];
+
+      ctx.fillStyle = "#a78bfa";
+
+      for (const point of points) {
+        ctx.beginPath();
+        ctx.arc(
+          point.x * 640,
+          point.y * 480,
+          1.5,
+          0,
+          Math.PI * 2
+        );
+        ctx.fill();
+      }
+
+      const blend = result.faceBlendshapes[0]?.categories || [];
+
+      function getValue(name) {
+        return blend.find(x => x.categoryName === name)?.score || 0;
+      }
+
+      const jaw = getValue("jawOpen");
+      const blink = (getValue("eyeBlinkLeft") +
+                     getValue("eyeBlinkRight")) / 2;
+
+      document.getElementById("head").textContent =
+        "Head movement: Face detected";
+
+      document.getElementById("mouth").textContent =
+        "Mouth movement: " + Math.round(jaw * 100) + "% open";
+
+      document.getElementById("eyes").textContent =
+        "Eye blinking: " + Math.round(blink * 100) + "%";
+
+      status.textContent = "Tracking your face successfully!";
+    } else {
+      status.textContent = "No face detected. Look at your camera.";
+    }
+  }
+
+  requestAnimationFrame(trackFace);
+}
+
+document.getElementById("start").onclick = startCamera;
+
+document.getElementById("stop").onclick = () => {
+  running = false;
+
+  if (stream) {
+    stream.getTracks().forEach(track => track.stop());
+    stream = null;
+  }
+
+  camera.srcObject = null;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  status.textContent = "Tracking stopped.";
+};
+
+</script>
 </body>
 </html>
+
