@@ -209,13 +209,13 @@ const rightBlink = getValue("eyeBlinkRight");
 
 const nose = points[1];
 
-const movementX = (nose.x - 0.5) * 30;
-const movementY = (nose.y - 0.5) * 20;
+const movementX = (nose.x - 0.5) * 180
+const movementY = (nose.y - 0.5) * 120
 
 const avatar = document.getElementById("avatar");
 
 avatar.style.transform =
-  `translate(${movementX}px, ${movementY}px)`;
+  `translate(${movementX}px, ${movementY}px)`
 
 avatar.style.transition = "transform 0.1s ease";
 
